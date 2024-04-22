@@ -20,6 +20,13 @@ describe("Order unit tests", () => {
     }).toThrowError("Items are required");
   });
 
+  it("should throw error when item quantity is lower or equal to 0", () => {
+    expect(() => {
+      const item = new OrderItem("i1", "Item 1", 100, "p1", 0);
+      new Order("123", "123", [item]);
+    }).toThrowError("Quantity must be greater than 0");
+  });
+
   it("should calculate total", () => {
     const item = new OrderItem("i1", "Item 1", 100, "p1", 2);
     const item2 = new OrderItem("i2", "Item 2", 200, "p2", 2);
