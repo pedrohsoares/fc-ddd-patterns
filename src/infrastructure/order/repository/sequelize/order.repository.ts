@@ -1,39 +1,31 @@
-import { Sequelize, Transaction } from "sequelize";
 import Order from "../../../../domain/checkout/entity/order";
-import OrderItem from "../../../../domain/checkout/entity/order_item";
 import OrderRepositoryInterface from "../../../../domain/checkout/repository/order-repository.interface";
 import OrderItemModel from "./order-item.model";
 import OrderModel from "./order.model";
-
+import { Transaction } from "sequelize";
+import { OrderMapper } from "./order.mapper";
 export default class OrderRepository implements OrderRepositoryInterface {
   async update(entity: Order): Promise<void> {
-    const itemUpdates = entity.items.map((item) => {
-      return OrderItemModel.update(
+    const transaction = await OrderModel.sequelize.transaction();
+
+    try {
+      await this.recreateOrderItems(entity, transaction);
+
+      await OrderModel.update(
         {
-          quantity: item.quantity,
-          price: item.price,
-          name: item.name,
-          product_id: item.productId,
+          total: entity.total(),
         },
         {
-          where: {
-            id: item.id,
-          },
+          transaction: transaction,
+          where: { id: entity.id },
         }
       );
-    });
 
-    await Promise.all(itemUpdates);
-    await OrderModel.update(
-      {
-        total: entity.total(),
-      },
-      {
-        where: {
-          id: entity.id,
-        },
-      }
-    );
+      await transaction.commit();
+    } catch (e) {
+      await transaction.rollback();
+      throw e;
+    }
   }
 
   async find(id: string): Promise<Order> {
@@ -45,19 +37,7 @@ export default class OrderRepository implements OrderRepositoryInterface {
       throw new Error("Order not found");
     }
 
-    return new Order(
-      orderModel.id,
-      orderModel.customer_id,
-      orderModel.items.map((item: OrderItemModel) => {
-        return new OrderItem(
-          item.id,
-          item.name,
-          item.price,
-          item.product_id,
-          item.quantity
-        );
-      })
-    );
+    return OrderMapper.toDomain(orderModel);
   }
 
   async findAll(): Promise<Order[]> {
@@ -65,21 +45,9 @@ export default class OrderRepository implements OrderRepositoryInterface {
       include: [{ model: OrderItemModel }],
     });
 
-    return orderModels.map((orderModel: OrderModel) => {
-      return new Order(
-        orderModel.id,
-        orderModel.customer_id,
-        orderModel.items.map((item: OrderItemModel) => {
-          return new OrderItem(
-            item.id,
-            item.name,
-            item.price,
-            item.product_id,
-            item.quantity
-          );
-        })
-      );
-    });
+    return orderModels.map((orderModel: OrderModel) =>
+      OrderMapper.toDomain(orderModel)
+    );
   }
 
   async create(entity: Order): Promise<void> {
@@ -100,5 +68,26 @@ export default class OrderRepository implements OrderRepositoryInterface {
         include: [{ model: OrderItemModel }],
       }
     );
+  }
+
+  private async recreateOrderItems(
+    order: Order,
+    transaction?: Transaction
+  ): Promise<void> {
+    await OrderItemModel.destroy({
+      where: { order_id: order.id },
+      transaction,
+    });
+
+    const items = order.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      price: item.price,
+      product_id: item.productId,
+      quantity: item.quantity,
+      order_id: order.id,
+    }));
+
+    await OrderItemModel.bulkCreate(items, { transaction });
   }
 }
